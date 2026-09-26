@@ -11,99 +11,49 @@ from extractor import (
     list_usecases,
 )
 
-st.set_page_config(
-    page_title="Document Analyzer",
-    page_icon="📄",
-    layout="centered",
-    initial_sidebar_state="collapsed",
-)
 
-# --- Custom CSS ---
+def load_api_key():
+    """Resolve the Groq key: env var first, then Streamlit secrets.
+
+    extractor.get_client() reads os.environ only, so a Cloud secret has to be
+    copied into the env before extraction. Precedence:
+      local dev    -> real env var, or .env (extractor loads it at import)
+      Streamlit Cloud -> st.secrets, which never reaches the process env
+
+    st.secrets raises when no secrets.toml exists at all, hence the guard: a
+    local run with no key should show the warning below, not a traceback.
+    """
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        try:
+            api_key = st.secrets.get("GROQ_API_KEY")
+        except Exception:  # no secrets.toml and no env key configured
+            api_key = None
+    if api_key:
+        os.environ["GROQ_API_KEY"] = str(api_key)
+    return bool(api_key)
+
+
+# --- Custom CSS for darker table headers ---
 st.markdown("""
 <style>
-    .main {
-        background-color: #0e1117;
-        color: #e0e0e0;
-    }
-    .stApp {
-        background-color: #0e1117;
-    }
-    .stTitle {
-        color: #00d4aa;
-        text-align: center;
-    }
-    .stButton > button {
-        background-color: #00d4aa;
-        color: #0e1117;
-        border: none;
-        border-radius: 8px;
-        font-weight: bold;
-        padding: 0.5rem 2rem;
-    }
-    .stButton > button:hover {
-        background-color: #00f5c8;
-    }
-    .stTextInput > label {
-        color: #aaaaaa;
-    }
-    .stTextInput > div > div > input {
-        background-color: #1a1f2e;
-        color: #e0e0e0;
-        border: 1px solid #333;
-        border-radius: 6px;
-    }
-    .stSelectbox > label {
-        color: #aaaaaa;
-    }
-    .stSelectbox > div > div {
-        background-color: #1a1f2e;
-        color: #e0e0e0;
-        border-radius: 6px;
-    }
-    .stFileUploader {
-        color: #aaaaaa;
-    }
-    .stAlert {
-        background-color: #1a1f2e;
-        border-left: 4px solid #00d4aa;
-    }
-    .stWarning {
-        background-color: #2a2010;
-        border-left: 4px solid #ffaa00;
-    }
-    .stError {
-        background-color: #2a1010;
-        border-left: 4px solid #ff4444;
-    }
-    .stSidebar {
-        background-color: #0e1117;
-    }
-    .header-text {
-        color: #00d4aa;
-        font-size: 2.5rem;
-        font-weight: 800;
-        text-align: center;
-        margin-bottom: 0.5rem;
-    }
-    .subheader-text {
-        color: #888888;
-        font-size: 1rem;
-        text-align: center;
-        margin-bottom: 2rem;
+    thead th {
+        background-color: #1a1f2e !important;
+        color: #e0e0e0 !important;
+        border-bottom: 2px solid #00d4aa !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
+
 # --- Login Screen ---
-st.markdown('<p class="header-text">📄 Document Analyzer</p>', unsafe_allow_html=True)
-st.markdown('<p class="subheader-text">Upload & extract data from your documents</p>', unsafe_allow_html=True)
+st.title("Document Analyzer MVP")
 
 if "logged_in" not in st.session_state or not st.session_state.logged_in:
-    st.markdown("### 🔒 Login Required")
     login_username = st.text_input("Username", key="login_user")
     login_password = st.text_input("Password", type="password", key="login_pass")
 
-    if st.button("Login", use_container_width=True):
+    if st.button("Login"):
         if login_username == "sandy" and login_password == "sandy":
             st.session_state.logged_in = True
             st.rerun()
@@ -112,8 +62,6 @@ if "logged_in" not in st.session_state or not st.session_state.logged_in:
     st.stop()
 
 # --- Main App ---
-st.markdown("---")
-
 try:
     usecases = list_usecases()
 except ExtractorError as error:
@@ -136,7 +84,7 @@ if not load_api_key():
     st.warning("GROQ_API_KEY is not configured. Set it in `.env` locally, or add it "
                 "under Tools > Secrets as `GROQ_API_KEY` when deployed.")
 
-if uploaded and st.button("Analyze", use_container_width=True):
+if uploaded and st.button("Analyze"):
     try:
         with st.spinner("Analyzing..."):
             result = analyze_document(uploaded.getvalue(), uploaded.name, usecase)
