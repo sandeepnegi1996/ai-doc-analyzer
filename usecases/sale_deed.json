@@ -1,0 +1,9 @@
+{
+  "name": "Sale Deed",
+  "fields": [
+    { "key": "property_size", "patterns": ["(\\d+)\\s*(sq\\.?\\s*ft|square feet)"], "type": "string" },
+    { "key": "seller_name",   "patterns": ["Seller[ \\t]*:?[ \\t]*([A-Z][a-z]+(?:[ \\t][A-Z][a-z]+)+)"], "type": "string" },
+    { "key": "buyer_name",    "patterns": ["Buyer[ \\t]*:?[ \\t]*([A-Z][a-z]+(?:[ \\t][A-Z][a-z]+)+)"], "type": "string" },
+    { "key": "registration_date", "patterns": ["Registered on\\s*:?\\s*([\\d/\\-]+)"], "type": "date" }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "Sales Order UB",
+  "fields": [
+    { "key": "order_receive_date",     "type": "date",   "description": "Order Receive Date — the date the sales order was received; format as YYYY-MM-DD" },
+    { "key": "order_no",               "type": "string", "description": "Order No — the sales order number" },
+    { "key": "company_name",           "type": "string", "description": "Company Name — the customer company placing the order" },
+    { "key": "contact_person",         "type": "string", "description": "Contact Person — the person to contact at the company" },
+    { "key": "contact_no",             "type": "string", "description": "Contact No — the primary contact phone number; keep digits, +, - exactly as printed" },
+    { "key": "kind_attention",         "type": "string", "description": "Kind Attention — the addressee named in the 'Kind attention' / 'Kind attn' line" },
+    { "key": "contact_no_2",           "type": "string", "description": "Contact No (second listing) — the alternate/second contact phone number on the order" },
+    { "key": "department",             "type": "string", "description": "Department — the department within the company" },
+    { "key": "email",                  "type": "string", "description": "Email — the contact email address" },
+    { "key": "delivery_address",       "type": "string", "description": "Delivery Address — the full address where the order is to be delivered" },
+    { "key": "expected_delivery_date", "type": "date",   "description": "Expected Delivery Date — the expected delivery date; format as YYYY-MM-DD" },
+    { "key": "sales_person",           "type": "string", "description": "Sales Person — the salesperson handling this order" }
+  ],
+  "items": [
+    { "key": "items_category",         "type": "string", "description": "Items Category — the category of the ordered items" },
+    { "key": "item_name",              "type": "string", "description": "Item Name — the name of the ordered item" },
+    { "key": "item_code_sku",          "type": "string", "description": "Item Code (SKU) — the item code / SKU exactly as printed, including letters and hyphens" },
+    { "key": "pack_size",              "type": "string", "description": "Pack Size — e.g. '500 ml', '1 kg', '6 x 250 ml'" },
+    { "key": "ordered_qty",            "type": "int",    "description": "Ordered Qty — the quantity ordered, as a whole number" },
+    { "key": "brand_name",             "type": "string", "description": "Brand Name — the brand of the ordered item" }
+  ]
+}
