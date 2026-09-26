@@ -1,50 +1,61 @@
-import subprocess
-import tempfile
-import os
-import io
-import re
-import fitz  # PyMuPDF
-from PIL import Image
-from fastapi import FastAPI, UploadFile, File
+"""FastAPI shell over extractor.py. All logic lives in extractor.py.
 
-app = FastAPI()   # <-- THIS LINE MUST EXIST AT TOP LEVEL
+This module is transport only: it adapts HTTP in/out and maps ExtractorError
+subclasses onto status codes. Streamlit does not use this server.
+"""
 
-def extract_text_from_pdf(pdf_bytes):
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    text = ""
-    for page in doc:
-        text += page.get_text()
-    return text
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 
-def extract_text_from_image(image_bytes):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-        tmp.write(image_bytes)
-        tmp_path = tmp.name
-    try:
-        result = subprocess.run(
-            ["tesseract", tmp_path, "stdout"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8"
-        )
-        return result.stdout
-    finally:
-        os.unlink(tmp_path)
+from extractor import (
+    MODEL,
+    ExtractorError,
+    LLMFailureError,
+    MissingApiKeyError,
+    OversizedDocumentError,
+    UnknownUsecaseError,
+    analyze_document,
+    list_usecases,
+)
 
-def parse_invoice_fields(text):
-    invoice_no = re.search(r"Invoice\s*#?\s*:?\s*(\w+)", text, re.I)
-    total = re.search(r"Total\s*:?\s*\$?([\d,.]+)", text, re.I)
+app = FastAPI()
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.get("/v1/models")
+async def list_models():
     return {
-        "invoice_number": invoice_no.group(1) if invoice_no else None,
-        "total": total.group(1) if total else None,
-        "raw_text_preview": text
+        "object": "list",
+        "data": [
+            {
+                "id": MODEL,
+                "object": "model",
+                "created": 0,
+                "owned_by": "groq",
+            }
+        ],
     }
 
+
+@app.get("/usecases")
+async def get_usecases():
+    return list_usecases()
+
+
 @app.post("/analyze")
-async def analyze(file: UploadFile = File(...)):
-    content = await file.read()
-    if file.filename.lower().endswith(".pdf"):
-        text = extract_text_from_pdf(content)
-    else:
-        text = extract_text_from_image(content)
-    return parse_invoice_fields(text)
+async def analyze(usecase: str = Form(...), file: UploadFile = File(...)):
+    try:
+        return analyze_document(await file.read(), file.filename or "", usecase)
+    except UnknownUsecaseError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except MissingApiKeyError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+    except OversizedDocumentError as error:
+        raise HTTPException(status_code=413, detail=str(error)) from error
+    except LLMFailureError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except ExtractorError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
