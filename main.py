@@ -51,6 +51,21 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/v1/models")
+async def list_models():
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": MODEL,
+                "object": "model",
+                "created": 0,
+                "owned_by": "groq",
+            }
+        ],
+    }
+
+
 @app.get("/usecases")
 async def get_usecases():
     return [
@@ -88,6 +103,16 @@ def build_prompt(text, config):
         f'- "{f["key"]}" ({f.get("type", "string")}): {f.get("description", f["key"])}'
         for f in config.get("fields", [])
     )
+    items_section = ""
+    if config.get("items"):
+        item_lines = "\n".join(
+            f'  - "{f["key"]}" ({f.get("type", "string")}): {f.get("description", f["key"])}'
+            for f in config["items"]
+        )
+        items_section = f"""
+Items (return as an array under "items", one entry per item line in the order):
+{item_lines}
+"""
     return f"""Extract the following fields from the document text below.
 Return ONLY a single JSON object with exactly these keys — no other text, no markdown fences.
 Use null for any field you cannot find. Return "float" fields as plain numbers (no
@@ -95,7 +120,7 @@ currency symbols or commas). Return "date" fields as YYYY-MM-DD.
 
 Fields to extract:
 {field_lines}
-
+{items_section}
 Document text:
 \"\"\"
 {text[:6000]}
@@ -110,6 +135,22 @@ def build_json_schema(config):
         f["key"]: {"type": [type_map.get(f.get("type", "string"), "string"), "null"]}
         for f in config.get("fields", [])
     }
+    required = list(properties.keys())
+    if config.get("items"):
+        item_properties = {
+            f["key"]: {"type": [type_map.get(f.get("type", "string"), "string"), "null"]}
+            for f in config["items"]
+        }
+        properties["items"] = {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": item_properties,
+                "required": list(item_properties.keys()),
+                "additionalProperties": False,
+            },
+        }
+        required.append("items")
     return {
         "type": "json_schema",
         "json_schema": {
@@ -118,7 +159,7 @@ def build_json_schema(config):
             "schema": {
                 "type": "object",
                 "properties": properties,
-                "required": list(properties.keys()),
+                "required": required,
                 "additionalProperties": False,
             },
         },
@@ -126,25 +167,34 @@ def build_json_schema(config):
 
 
 def coerce_types(fields, config):
+    type_map = {"float": lambda v: float(str(v).replace(",", "").replace("$", "")),
+                "int": lambda v: int(str(v).replace(",", ""))}
     for f in config.get("fields", []):
         key, ftype = f["key"], f.get("type")
         val = fields.get(key)
-        if val is None:
+        if val is None or ftype not in type_map:
             continue
         try:
-            if ftype == "float":
-                fields[key] = float(str(val).replace(",", "").replace("$", ""))
-            elif ftype == "int":
-                fields[key] = int(str(val).replace(",", ""))
+            fields[key] = type_map[ftype](val)
         except (ValueError, TypeError):
             pass  # leave as-is if coercion fails, better than dropping the value
+    for item in fields.get("items") or []:
+        for f in config.get("items", []):
+            key, ftype = f["key"], f.get("type")
+            val = item.get(key)
+            if val is None or ftype not in type_map:
+                continue
+            try:
+                item[key] = type_map[ftype](val)
+            except (ValueError, TypeError):
+                pass
     return fields
 
 
 def extract_fields(text, config):
     response = get_client().chat.completions.create(
         model=MODEL,
-        max_tokens=500,
+        max_tokens=2000,
         temperature=0,
         response_format=build_json_schema(config),
         messages=[{"role": "user", "content": build_prompt(text, config)}],
