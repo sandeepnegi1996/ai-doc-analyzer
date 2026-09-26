@@ -1,7 +1,8 @@
-fastapi
-uvicorn
-python-dotenv
+# --- Streamlit Cloud: required for the UI to run ---
+# Every entry here is imported by app.py or extractor.py.
 streamlit
-Pillow
+groq
 PyMuPDF
-python-multipart
+python-dotenv
+
+# tesseract is a system binary, not a pip package -- see packages.txt
