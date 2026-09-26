@@ -36,24 +36,25 @@ streamlit run app.py
 Open: http://localhost:8501
 
 ## Usage
-1. Upload a PDF, PNG, or JPG invoice.
+1. Select a document type and upload a supported PDF or image.
 2. Click **Analyze**.
-3. View extracted JSON (invoice number, total, raw text preview).
+3. View the configured fields and raw text preview.
 
 ## Project Structure
 ```
 main.py          # FastAPI backend + extraction logic
 app.py           # Streamlit UI
 requirements.txt # Dependencies
+usecases/*.json  # Per-document-type extraction rules
 ```
 
 ## Roadmap
 - [ ] Preprocess images for better OCR accuracy
 - [ ] Pydantic schemas for typed output
-- [ ] Per-document-type regex rules (`rules.json`)
+- [x] Per-document-type regex rules (`usecases/*.json`)
 - [ ] Local LLM fallback (Ollama) for messy documents
 - [ ] Docker packaging
 
 ## Notes
-- Currently tuned for **invoices only**. Add more document types as needed.
+- Add a JSON config under `usecases/` to expose another document type in the frontend.
 - All processing is local — no data leaves your machine.

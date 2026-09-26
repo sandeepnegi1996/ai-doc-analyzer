@@ -1,0 +1,9 @@
+
+{
+  "name": "Invoice",
+  "fields": [
+    { "key": "invoice_number", "patterns": ["Invoice\\s*#?\\s*:?\\s*(\\w+)"], "type": "string" },
+    { "key": "total",          "patterns": ["Total\\s*:?\\s*\\$?([\\d,.]+)"], "type": "float" },
+    { "key": "date",           "patterns": ["Date\\s*:?\\s*([\\d/\\-]+)"],     "type": "date" }
+  ]
+}
