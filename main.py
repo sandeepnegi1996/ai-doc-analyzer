@@ -5,11 +5,33 @@ import json
 import re
 from pathlib import Path
 import fitz  # PyMuPDF
-from PIL import Image
+from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from groq import Groq
 
 app = FastAPI()
-USECASES_DIR = Path(__file__).resolve().parent / "usecases"
+ROOT_DIR = Path(__file__).resolve().parent
+USECASES_DIR = ROOT_DIR / "usecases"
+load_dotenv(ROOT_DIR / ".env")  # no-op if absent; real env vars win
+MODEL = "openai/gpt-oss-120b"  # free on Groq, supports strict JSON schema mode
+
+_client = None
+
+
+def get_client():
+    """Build the Groq client on first use so a missing key fails the request, not the import."""
+    global _client
+    if _client is None:
+        if not os.environ.get("GROQ_API_KEY"):
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "GROQ_API_KEY is not set. Add it to .env in the project root or "
+                    "export it before starting the server."
+                ),
+            )
+        _client = Groq(api_key=os.environ["GROQ_API_KEY"])
+    return _client
 
 
 def load_usecase(usecase):
@@ -24,6 +46,11 @@ def load_usecase(usecase):
         return json.load(config_file)
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.get("/usecases")
 async def get_usecases():
     return [
@@ -31,12 +58,14 @@ async def get_usecases():
         for path in sorted(USECASES_DIR.glob("*.json"))
     ]
 
+
 def extract_text_from_pdf(pdf_bytes):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     text = ""
     for page in doc:
         text += page.get_text()
     return text
+
 
 def extract_text_from_image(image_bytes):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
@@ -47,25 +76,85 @@ def extract_text_from_image(image_bytes):
             ["tesseract", tmp_path, "stdout"],
             capture_output=True,
             text=True,
-            encoding="utf-8"
+            encoding="utf-8",
         )
         return result.stdout
     finally:
         os.unlink(tmp_path)
 
-def extract_fields(text, config):
-    fields = {}
-    for field in config.get("fields", []):
-        value = None
-        for pattern in field.get("patterns", []):
-            match = re.search(pattern, text)
-            if match:
-                value = match.group(1)
-                if field.get("type") == "float":
-                    value = float(value.replace(",", ""))
-                break
-        fields[field["key"]] = value
 
+def build_prompt(text, config):
+    field_lines = "\n".join(
+        f'- "{f["key"]}" ({f.get("type", "string")}): {f.get("description", f["key"])}'
+        for f in config.get("fields", [])
+    )
+    return f"""Extract the following fields from the document text below.
+Return ONLY a single JSON object with exactly these keys — no other text, no markdown fences.
+Use null for any field you cannot find. Return "float" fields as plain numbers (no
+currency symbols or commas). Return "date" fields as YYYY-MM-DD.
+
+Fields to extract:
+{field_lines}
+
+Document text:
+\"\"\"
+{text[:6000]}
+\"\"\"
+
+JSON:"""
+
+
+def build_json_schema(config):
+    type_map = {"string": "string", "float": "number", "int": "integer", "date": "string"}
+    properties = {
+        f["key"]: {"type": [type_map.get(f.get("type", "string"), "string"), "null"]}
+        for f in config.get("fields", [])
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "extracted_fields",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": properties,
+                "required": list(properties.keys()),
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def coerce_types(fields, config):
+    for f in config.get("fields", []):
+        key, ftype = f["key"], f.get("type")
+        val = fields.get(key)
+        if val is None:
+            continue
+        try:
+            if ftype == "float":
+                fields[key] = float(str(val).replace(",", "").replace("$", ""))
+            elif ftype == "int":
+                fields[key] = int(str(val).replace(",", ""))
+        except (ValueError, TypeError):
+            pass  # leave as-is if coercion fails, better than dropping the value
+    return fields
+
+
+def extract_fields(text, config):
+    response = get_client().chat.completions.create(
+        model=MODEL,
+        max_tokens=500,
+        temperature=0,
+        response_format=build_json_schema(config),
+        messages=[{"role": "user", "content": build_prompt(text, config)}],
+    )
+    raw = response.choices[0].message.content.strip()
+    try:
+        fields = json.loads(raw)
+    except json.JSONDecodeError:
+        fields = {f["key"]: None for f in config.get("fields", [])}
+    fields = coerce_types(fields, config)
     fields["raw_text_preview"] = text
     return fields
 
