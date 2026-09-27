@@ -2,6 +2,8 @@
 # Every entry here is imported by app.py or extractor.py.
 streamlit
 groq
+openai
+pandas
 PyMuPDF
 python-dotenv
 

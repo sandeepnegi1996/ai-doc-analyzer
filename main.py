@@ -6,13 +6,14 @@ subclasses onto status codes. Streamlit does not use this server.
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 
+from config import LLM_PROVIDER, ModelConfigError, resolve_model
 from extractor import (
-    MODEL,
     ExtractorError,
     LLMFailureError,
     MissingApiKeyError,
     OversizedDocumentError,
     UnknownUsecaseError,
+    UnsupportedProviderError,
     analyze_document,
     list_usecases,
 )
@@ -27,14 +28,19 @@ async def health():
 
 @app.get("/v1/models")
 async def list_models():
+    # The effective model, resolved the same way the extractor resolves it.
+    try:
+        model_id = resolve_model()
+    except ModelConfigError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
     return {
         "object": "list",
         "data": [
             {
-                "id": MODEL,
+                "id": model_id,
                 "object": "model",
                 "created": 0,
-                "owned_by": "groq",
+                "owned_by": LLM_PROVIDER,
             }
         ],
     }
@@ -53,6 +59,8 @@ async def analyze(usecase: str = Form(...), file: UploadFile = File(...)):
         raise HTTPException(status_code=404, detail=str(error)) from error
     except MissingApiKeyError as error:
         raise HTTPException(status_code=401, detail=str(error)) from error
+    except UnsupportedProviderError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
     except OversizedDocumentError as error:
         raise HTTPException(status_code=413, detail=str(error)) from error
     except LLMFailureError as error:
