@@ -67,7 +67,7 @@ def frame_from_rows(rows, columns):
     return pd.DataFrame(rows, columns=columns)
 
 
-def combined_table(result, config):
+def combined_table(result, config, source_file=None):
     """The single results table: one row per line item, all fields as columns.
 
     Returns (frame, fields) where `fields` are the usecase field dicts in the
@@ -75,6 +75,9 @@ def combined_table(result, config):
 
     With no line items the table is a single row of document fields, so both
     cases render through exactly the same code path.
+
+    When `source_file` is provided (batch mode) a "Source File" column is
+    inserted right after the index, so each row traces back to its document.
     """
     doc_fields = config.get("fields", [])
     item_fields = config.get("items", [])
@@ -92,7 +95,14 @@ def combined_table(result, config):
     else:
         rows = [dict(doc_row)] if doc_fields else []
 
-    columns = [INDEX_LABEL] + list(doc_row) + item_labels
+    if source_file is not None:
+        for row in rows:
+            row["source_file"] = source_file
+        source_label = "Source File"
+        columns = [INDEX_LABEL, source_label] + list(doc_row) + item_labels
+    else:
+        columns = [INDEX_LABEL] + list(doc_row) + item_labels
+
     rows = [{INDEX_LABEL: n, **row} for n, row in enumerate(rows, start=1)]
     return frame_from_rows(rows, columns), doc_fields + item_fields
 
