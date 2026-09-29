@@ -25,9 +25,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import fitz  # PyMuPDF
+import pymupdf
 from dotenv import load_dotenv
+from streamlit import text
 
+from identifier_detector import detect_identifiers
 from providers import get_llm_provider
 
 # The provider error classes are aliased because this module defines its own
@@ -43,11 +45,17 @@ ROOT_DIR = Path(__file__).resolve().parent
 USECASES_DIR = ROOT_DIR / "usecases"
 load_dotenv(ROOT_DIR / ".env")  # no-op if absent; real env vars win
 
-MAX_DOC_CHARS = 6000
+MAX_DOC_CHARS = 15000
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 RAW_TEXT_KEY = "raw_text_preview"
 MAX_TOKENS = 2000
 TEMPERATURE = 0
+
+# OCR configuration
+OCR_DPI = 300
+OCR_PSM_MODES = (3, 11)
+PDF_OCR_PSM_MODES = (6, 3)
+MIN_OCR_CHARS = 30
 
 
 class ExtractorError(Exception):
@@ -111,54 +119,172 @@ def list_usecases():
 # --- text extraction ------------------------------------------------------
 
 
+def _run_tesseract(image_path, psm=3):
+    """Run Tesseract OCR against an image path."""
+    try:
+        result = subprocess.run(
+            [
+                "tesseract",
+                image_path,
+                "stdout",
+                "--psm",
+                str(psm),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+        )
+    except FileNotFoundError as error:
+        raise UnsupportedFileError(
+            "Tesseract OCR is not installed or not available on PATH."
+        ) from error
+    except subprocess.TimeoutExpired as error:
+        raise EmptyDocumentError(
+            "OCR timed out while reading the document."
+        ) from error
+
+    if result.returncode != 0:
+        raise EmptyDocumentError(
+            "OCR failed while reading the document."
+        )
+
+    return result.stdout.strip()
+
+
+def is_usable_ocr_text(text):
+    """Check whether OCR output contains enough readable content."""
+    if not text:
+        return False
+
+    text = text.strip()
+
+    if len(text) < MIN_OCR_CHARS:
+        return False
+
+    alphanumeric_count = sum(
+        char.isalnum()
+        for char in text
+    )
+
+    return alphanumeric_count >= MIN_OCR_CHARS
+
+
 def extract_text_from_image(file_bytes):
-    """OCR an image with Tesseract. Tesseract sniffs content, so the suffix is cosmetic."""
+    """OCR an image with Tesseract."""
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
         tmp.write(file_bytes)
         tmp_path = tmp.name
+
     try:
-        try:
-            result = subprocess.run(
-                ["tesseract", tmp_path, "stdout"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-            )
-        except FileNotFoundError as error:
-            raise UnsupportedFileError(
-                UnsupportedFileError.DEFAULT_MESSAGE
-            ) from error
-        text = result.stdout.strip()
-        if not text:
-            raise EmptyDocumentError(
-                "No readable text was found in this document."
-            )
-        return text
+        for psm in OCR_PSM_MODES:
+            text = _run_tesseract(tmp_path, psm=psm)
+
+            if is_usable_ocr_text(text):
+                return text
+
+        raise EmptyDocumentError(
+            "No readable text was found in this document."
+        )
     finally:
         os.unlink(tmp_path)
 
 
 def extract_text_from_pdf(file_bytes):
-    """Concatenate the text layer of a PDF. No OCR fallback: scans yield ''."""
+    """
+    Extract text from a PDF.
+
+    Strategy:
+    1. Try the native PDF text layer first.
+    2. If the PDF is scanned/image-based, render pages at 300 DPI.
+    3. Run Tesseract OCR against the rendered pages.
+    4. Try multiple Tesseract page segmentation modes.
+    """
     try:
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        doc = pymupdf.open(stream=file_bytes, filetype="pdf")
     except Exception as error:
         raise UnsupportedFileError(
             UnsupportedFileError.DEFAULT_MESSAGE
         ) from error
+
     try:
-        text = "".join(page.get_text() for page in doc)
-        if not text.strip():
+        # ---------------------------------------------------------
+        # Step 1: Try native PDF text extraction
+        # ---------------------------------------------------------
+        text = "\n".join(
+            page.get_text("text")
+            for page in doc
+        ).strip()
+
+        if len(text) >= MIN_OCR_CHARS:
+            return text
+
+        # ---------------------------------------------------------
+        # Step 2: PDF has little/no text -> OCR fallback
+        # ---------------------------------------------------------
+        ocr_pages = []
+
+        zoom = OCR_DPI / 72
+        matrix = pymupdf.Matrix(zoom, zoom)
+
+        for page_number, page in enumerate(doc):
+            pix = page.get_pixmap(
+                matrix=matrix,
+                alpha=False,
+            )
+
+            with tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix=".png",
+            ) as tmp:
+                image_path = tmp.name
+
+            try:
+                pix.save(image_path)
+
+                page_text = ""
+
+                # Try PSM 6 (uniform block) first, then PSM 3 (auto).
+                for psm in PDF_OCR_PSM_MODES:
+                    candidate = _run_tesseract(
+                        image_path,
+                        psm=psm,
+                    )
+
+                    if is_usable_ocr_text(candidate):
+                        page_text = candidate
+                        break
+
+                if page_text:
+                    ocr_pages.append(
+                        f"\n--- Page {page_number + 1} ---\n"
+                        f"{page_text}"
+                    )
+
+            finally:
+                if os.path.exists(image_path):
+                    os.unlink(image_path)
+
+        ocr_text = "\n".join(ocr_pages).strip()
+
+        if not ocr_text:
             raise EmptyDocumentError(
                 "No readable text was found in this document."
             )
-        return text
+
+        return ocr_text
+
     finally:
         doc.close()
 
 
 def extract_document_text(file_bytes, filename):
-    """Route by extension: PDF goes to PyMuPDF, everything else to OCR."""
+    """
+    Route document extraction by extension.
+
+    PDFs use native text extraction first and automatically
+    fall back to OCR for scanned/image-based documents.
+    """
     if len(file_bytes) > MAX_FILE_SIZE:
         raise OversizedDocumentError("Oversized document")
     if not file_bytes:
@@ -174,7 +300,7 @@ def extract_document_text(file_bytes, filename):
 # --- prompt / schema ------------------------------------------------------
 
 
-def build_prompt(text, config):
+def build_prompt(text, config, pre_detected=None):
     field_lines = "\n".join(
         f'- "{f["key"]}" ({f.get("type", "string")}): {f.get("description", f["key"])}'
         for f in config.get("fields", [])
@@ -189,6 +315,16 @@ def build_prompt(text, config):
 Items (return as an array under "items", one entry per item line in the order):
 {item_lines}
 """
+    pre_detected_section = ""
+    if pre_detected:
+        lines = "\n".join(
+            f'- "{key}": {value}'
+            for key, value in pre_detected.items()
+        )
+        pre_detected_section = f"""
+Pre-detected values (confirmed by regex, use these):
+{lines}
+"""
     return f"""Extract the following fields from the document text below.
 Return ONLY a single JSON object with exactly these keys — no other text, no markdown fences.
 Use null for any field you cannot find. Return "float" fields as plain numbers (no
@@ -197,6 +333,7 @@ currency symbols or commas). Return "date" fields as YYYY-MM-DD.
 Fields to extract:
 {field_lines}
 {items_section}
+{pre_detected_section}
 Document text:
 \"\"\"
 {text[:MAX_DOC_CHARS]}
@@ -328,18 +465,22 @@ def _acquire_provider():
         raise UnsupportedProviderError(str(error)) from error
 
 
-def call_llm(provider, text, config):
+def call_llm(provider, text, config, pre_detected=None):
     """Ask the provider for the fields; return its raw response string.
 
     The schema is only sent when the provider advertises schema support.
     Otherwise the call falls back to the API's plain JSON mode plus the
     prompt's own "return only JSON" instruction -- which is what
     `ProviderCapabilities` is for: ask, instead of finding out from a 400.
+
+    When `pre_detected` values are provided (from regex detection), they are
+    injected into the prompt as hints so the LLM knows what's already been
+    found and can focus on the remaining fields.
     """
     schema = build_json_schema(config) if provider.capabilities.json_schema else None
     try:
         return provider.extract(
-            prompt=build_prompt(text, config),
+            prompt=build_prompt(text, config, pre_detected=pre_detected),
             json_schema=schema,
             max_tokens=MAX_TOKENS,
             temperature=TEMPERATURE,
@@ -351,8 +492,33 @@ def call_llm(provider, text, config):
 def extract_fields(text, usecase):
     """Extract one already-parsed document: text -> LLMProvider -> field dict."""
     config = load_usecase(usecase)
-    raw = call_llm(_acquire_provider(), text, config)
-    fields = coerce_types(parse_llm_response(raw, config), config)
+
+    print("\n========== OCR TEXT ==========")
+    print(text)
+    print("========== OCR LENGTH ==========")
+    print(len(text))
+    print("================================\n")
+
+    # Stage 2: Regex-based identifier detection (before LLM)
+    detected = detect_identifiers(text, config)
+    if detected:
+        print("\n========== REGEX DETECTED ==========")
+        for key, value in detected.items():
+            print(f"  {key}: {value}")
+        print("====================================\n")
+
+    raw = call_llm(_acquire_provider(), text, config, pre_detected=detected)
+
+    print("\n========== LLM RAW RESPONSE ==========")
+    print(raw)
+    print("======================================\n")
+
+    llm_fields = parse_llm_response(raw, config)
+
+    # Merge: regex-detected values take priority over LLM values
+    merged = {**llm_fields, **detected}
+
+    fields = coerce_types(merged, config)
     fields = validate_result(fields, config)
     fields[RAW_TEXT_KEY] = text
     return fields

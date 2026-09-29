@@ -208,7 +208,10 @@ def test_analyze_document_end_to_end(provider, no_ocr):
 def test_analyze_document_survives_a_malformed_response(provider, no_ocr):
     provider.response = "I could not read that document."
     result = analyze_document(b"bytes", "scan.png", "invoice")
-    assert result["invoice_number"] is None
+    # Regex detection still finds values even when the LLM fails
+    assert result["invoice_number"] == "INV-10012"
+    assert result["total"] == 1699.48
+    assert result["date"] == "2021-03-26"
     assert result["raw_text_preview"] == DOCUMENT_TEXT
 
 
@@ -219,3 +222,153 @@ def test_analyze_document_reports_an_unknown_usecase_before_any_ocr(monkeypatch)
     monkeypatch.setattr(extractor, "extract_document_text", fail)
     with pytest.raises(UnknownUsecaseError):
         analyze_document(b"bytes", "scan.png", "does_not_exist")
+
+
+# --- identifier detection (Stage 2) -----------------------------------------
+
+
+class TestDetectIdentifiers:
+    """Tests for regex-based identifier detection before the LLM call."""
+
+    def test_detects_invoice_fields(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Invoice Number: INV-10012\nTotal: 1699.48\nDate: 2021-03-26"
+        detected = detect_identifiers(text, INVOICE)
+        assert detected["invoice_number"] == "INV-10012"
+        assert detected["total"] == "1699.48"
+        assert detected["date"] == "2021-03-26"
+
+    def test_detects_po_number_fallback_for_order_no(self):
+        from identifier_detector import detect_identifiers
+
+        text = "PO number: UBPL/2026-27/Q693"
+        detected = detect_identifiers(text, ORDER)
+        assert detected["order_no"] == "UBPL/2026-27/Q693"
+
+    def test_detects_order_number(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Order No: UBPL/26-27/SO704"
+        detected = detect_identifiers(text, ORDER)
+        assert detected["order_no"] == "UBPL/26-27/SO704"
+
+    def test_detects_email(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Email: john.doe@example.com"
+        detected = detect_identifiers(text, ORDER)
+        assert detected["email"] == "john.doe@example.com"
+
+    def test_detects_phone_number(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Contact No: +91-9876543210"
+        detected = detect_identifiers(text, ORDER)
+        assert detected["contact_no"] == "+91-9876543210"
+
+    def test_detects_second_phone_number(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Contact No: +91-9876543210\nContact No: +91-0123456789"
+        detected = detect_identifiers(text, ORDER)
+        assert detected["contact_no"] == "+91-9876543210"
+        assert detected["contact_no_2"] == "+91-0123456789"
+
+    def test_detects_company_name(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Company Name: Acme Corporation Pvt. Ltd."
+        detected = detect_identifiers(text, ORDER)
+        assert detected["company_name"] == "Acme Corporation Pvt. Ltd."
+
+    def test_detects_contact_person(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Contact Person: John Smith"
+        detected = detect_identifiers(text, ORDER)
+        assert detected["contact_person"] == "John Smith"
+
+    def test_detects_kind_attention(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Kind Attention: Mr. John Doe"
+        detected = detect_identifiers(text, ORDER)
+        assert detected["kind_attention"] == "Mr. John Doe"
+
+    def test_detects_department(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Department: Procurement"
+        detected = detect_identifiers(text, ORDER)
+        assert detected["department"] == "Procurement"
+
+    def test_detects_delivery_address(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Delivery Address: 123 Main St, Mumbai, Maharashtra 400001"
+        detected = detect_identifiers(text, ORDER)
+        assert "123 Main St" in detected["delivery_address"]
+
+    def test_detects_sales_person(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Sales Person: Jane Wilson"
+        detected = detect_identifiers(text, ORDER)
+        assert detected["sales_person"] == "Jane Wilson"
+
+    def test_detects_sale_deed_fields(self):
+        from identifier_detector import detect_identifiers
+
+        text = (
+            "Property Size: 1200 sq. ft\n"
+            "Seller: John Smith\n"
+            "Buyer: Jane Doe\n"
+            "Registered on: 15/03/2021"
+        )
+        detected = detect_identifiers(text, load_usecase("sale_deed"))
+        assert detected["property_size"] == "1200"
+        assert detected["seller_name"] == "John Smith"
+        assert detected["buyer_name"] == "Jane Doe"
+        assert detected["registration_date"] == "2021-03-15"
+
+    def test_normalizes_date_format(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Date: 26/03/2021"
+        detected = detect_identifiers(text, INVOICE)
+        assert detected["date"] == "2021-03-26"
+
+    def test_returns_empty_dict_for_no_match(self):
+        from identifier_detector import detect_identifiers
+
+        detected = detect_identifiers("no labeled values here", INVOICE)
+        assert detected == {}
+
+    def test_returns_empty_dict_for_empty_text(self):
+        from identifier_detector import detect_identifiers
+
+        detected = detect_identifiers("", INVOICE)
+        assert detected == {}
+
+    def test_ignores_fields_not_in_config(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Invoice Number: INV-10012"
+        config = {"fields": [{"key": "some_other_field", "type": "string"}]}
+        detected = detect_identifiers(text, config)
+        assert detected == {}
+
+    def test_takes_last_match_for_total(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Total: 1000.00\nTotal: 1199.48"
+        detected = detect_identifiers(text, INVOICE)
+        assert detected["total"] == "1199.48"
+
+    def test_handles_label_on_separate_line(self):
+        from identifier_detector import detect_identifiers
+
+        text = "PO number\nUBPL/2026-27/Q693"
+        detected = detect_identifiers(text, ORDER)
+        assert detected["order_no"] == "UBPL/2026-27/Q693"
