@@ -301,15 +301,19 @@ def extract_document_text(file_bytes, filename):
 
 
 def build_prompt(text, config, pre_detected=None):
+    # Fields marked with skip_llm are not sent to the LLM (e.g. items_category
+    # is kept in the table for manual entry but not extracted).
+    llm_fields = [f for f in config.get("fields", []) if not f.get("skip_llm")]
+    llm_items = [f for f in config.get("items", []) if not f.get("skip_llm")]
     field_lines = "\n".join(
         f'- "{f["key"]}" ({f.get("type", "string")}): {f.get("description", f["key"])}'
-        for f in config.get("fields", [])
+        for f in llm_fields
     )
     items_section = ""
-    if config.get("items"):
+    if llm_items:
         item_lines = "\n".join(
             f'  - "{f["key"]}" ({f.get("type", "string")}): {f.get("description", f["key"])}'
-            for f in config["items"]
+            for f in llm_items
         )
         items_section = f"""
 Items (return as an array under "items", one entry per item line in the order):
@@ -348,17 +352,22 @@ def build_json_schema(config):
     Deliberately provider-agnostic: this is the schema and nothing else. Each
     provider wraps it in whatever envelope its API expects, so no Groq-shaped
     `response_format` key leaks into this module.
+
+    Fields marked with skip_llm are excluded from the schema (e.g. items_category
+    is kept in the table for manual entry but not extracted).
     """
     type_map = {"string": "string", "float": "number", "int": "integer", "date": "string"}
+    llm_fields = [f for f in config.get("fields", []) if not f.get("skip_llm")]
+    llm_items = [f for f in config.get("items", []) if not f.get("skip_llm")]
     properties = {
         f["key"]: {"type": [type_map.get(f.get("type", "string"), "string"), "null"]}
-        for f in config.get("fields", [])
+        for f in llm_fields
     }
     required = list(properties.keys())
-    if config.get("items"):
+    if llm_items:
         item_properties = {
             f["key"]: {"type": [type_map.get(f.get("type", "string"), "string"), "null"]}
-            for f in config["items"]
+            for f in llm_items
         }
         properties["items"] = {
             "type": "array",

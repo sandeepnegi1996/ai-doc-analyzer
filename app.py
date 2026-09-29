@@ -26,7 +26,6 @@ from extractor import (
 from result_tables import (
     column_config_for,
     combined_table,
-    drop_empty_columns,
     export_basename,
     to_csv_bytes,
     to_json_bytes,
@@ -59,26 +58,12 @@ def render_results(result, config, source_name, usecase_key, batch_result=None):
     if frame.empty or len(frame.columns) <= 1:
         st.info("No fields were extracted from this document.")
     else:
-        # All-empty columns are hidden by default: they still claim horizontal
-        # space, which squeezes the columns that do have data. The count is
-        # disclosed below and the toggle brings them back, so nothing is lost
-        # silently -- and the JSON export always carries every field.
-        show_empty = st.checkbox(
-            "Show fields that were not found",
-            value=False,
-            key="show_empty_fields",
-        )
-        if show_empty:
-            visible, hidden = frame, []
-        else:
-            visible, hidden = drop_empty_columns(frame)
+        visible = frame
 
         # len(df) is the row count, not the column count -- count columns.
         summary = f"{len(visible.columns) - 1} fields · {len(frame)} rows"
         if item_count:
             summary += f" · {item_count} line item{'s' if item_count != 1 else ''}"
-        if hidden:
-            summary += f" · {len(hidden)} empty field{'s' if len(hidden) != 1 else ''} hidden"
         st.caption(summary)
 
         st.dataframe(
@@ -124,7 +109,6 @@ def _render_batch_results(batch_result, config, usecase_key):
         INDEX_LABEL,
         _width_for,
         column_config_for,
-        drop_empty_columns,
         field_label,
         frame_from_rows,
     )
@@ -159,15 +143,7 @@ def _render_batch_results(batch_result, config, usecase_key):
     columns = list(rows[0].keys())
     frame = frame_from_rows(rows, columns)
 
-    show_empty = st.checkbox(
-        "Show fields that were not found",
-        value=False,
-        key="show_empty_fields",
-    )
-    if show_empty:
-        visible, hidden = frame, []
-    else:
-        visible, hidden = drop_empty_columns(frame)
+    visible = frame
 
     # Build column config from usecase fields
     doc_fields = config.get("fields", [])
@@ -198,8 +174,6 @@ def _render_batch_results(batch_result, config, usecase_key):
                 )
 
     summary = f"{len(visible.columns) - 1} fields - {len(frame)} rows"
-    if hidden:
-        summary += f" - {len(hidden)} empty field{'s' if len(hidden) != 1 else ''} hidden"
     st.caption(summary)
 
     st.dataframe(

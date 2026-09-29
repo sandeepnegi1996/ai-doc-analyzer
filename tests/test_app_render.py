@@ -122,16 +122,15 @@ def test_one_row_per_line_item(recorder):
     assert len(recorder.shown) == 2
 
 
-def test_empty_fields_are_hidden_by_default(recorder):
+def test_empty_fields_are_always_shown(recorder):
     app.render_results(RESULT_WITH_ITEMS, ORDER_CONFIG, "order.pdf", "sales_order_ub")
-    assert "Department" not in recorder.shown.columns
+    assert "Department" in recorder.shown.columns
 
 
-def test_caption_discloses_the_hidden_fields(recorder):
-    """Hiding a column is fine; hiding it silently is not."""
+def test_caption_counts_all_fields(recorder):
     app.render_results(RESULT_WITH_ITEMS, ORDER_CONFIG, "order.pdf", "sales_order_ub")
     caption = recorder.captions[0]
-    assert "1 empty field hidden" in caption
+    assert "4 fields" in caption
     assert "2 line items" in caption
 
 

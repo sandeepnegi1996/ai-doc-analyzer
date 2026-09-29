@@ -144,6 +144,7 @@ def test_validate_normalizes_line_items_to_declared_keys():
     )
     assert validated["items"] == [
         {
+            "items_category": None,
             "item_code_sku": None,
             "item_name": "Tea",
             "pack_size": None,

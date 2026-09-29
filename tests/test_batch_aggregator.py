@@ -155,8 +155,8 @@ def test_batch_columns_deterministic_order():
 def test_batch_columns_match_usecase_config():
     batch = _batch([], usecase="sales_order_ub")
     cols = batch_columns(batch)
-    # source_file + 12 doc fields + 5 item fields = 18
-    assert len(cols) == 1 + 12 + 5
+    # source_file + 12 doc fields + 6 item fields = 19
+    assert len(cols) == 1 + 12 + 6
 
 
 # --- batch_to_frame ---------------------------------------------------------
