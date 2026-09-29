@@ -146,7 +146,6 @@ def test_validate_normalizes_line_items_to_declared_keys():
         {
             "item_code_sku": None,
             "item_name": "Tea",
-            "items_category": None,
             "pack_size": None,
             "ordered_qty": None,
             "brand_name": None,
@@ -238,13 +237,6 @@ class TestDetectIdentifiers:
         assert detected["invoice_number"] == "INV-10012"
         assert detected["total"] == "1699.48"
         assert detected["date"] == "2021-03-26"
-
-    def test_detects_po_number_fallback_for_order_no(self):
-        from identifier_detector import detect_identifiers
-
-        text = "PO number: UBPL/2026-27/Q693"
-        detected = detect_identifiers(text, ORDER)
-        assert detected["order_no"] == "UBPL/2026-27/Q693"
 
     def test_detects_order_number(self):
         from identifier_detector import detect_identifiers
@@ -369,6 +361,20 @@ class TestDetectIdentifiers:
     def test_handles_label_on_separate_line(self):
         from identifier_detector import detect_identifiers
 
-        text = "PO number\nUBPL/2026-27/Q693"
+        text = "Order No\nUBPL/2026-27/Q693"
         detected = detect_identifiers(text, ORDER)
         assert detected["order_no"] == "UBPL/2026-27/Q693"
+
+    def test_rejects_non_ubpl_order_number(self):
+        from identifier_detector import detect_identifiers
+
+        text = "Order No: XYZ/2026-27/SO704"
+        detected = detect_identifiers(text, ORDER)
+        assert "order_no" not in detected
+
+    def test_rejects_non_ubpl_po_number(self):
+        from identifier_detector import detect_identifiers
+
+        text = "PO number: UBPL/2026-27/Q693"
+        detected = detect_identifiers(text, ORDER)
+        assert "order_no" not in detected

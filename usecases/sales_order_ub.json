@@ -15,7 +15,6 @@
     { "key": "sales_person",           "type": "string", "description": "Sales Person — the salesperson handling this order" }
   ],
   "items": [
-    { "key": "items_category",         "type": "string", "description": "Items Category — the category of the ordered items" },
     { "key": "item_name",              "type": "string", "description": "Item Name — the name of the ordered item" },
     { "key": "item_code_sku",          "type": "string", "description": "Item Code (SKU) — the item code / SKU exactly as printed, including letters and hyphens" },
     { "key": "pack_size",              "type": "string", "description": "Pack Size — e.g. '500 ml', '1 kg', '6 x 250 ml'" },

@@ -20,15 +20,9 @@ from datetime import datetime
 # --- Pattern definitions ---
 # Each pattern captures the value in group 1.
 
-PO_NUMBER_PATTERN = re.compile(
-    r"(?:PO\s*(?:number|no\.?|#))\s*[:\-]?\s*"
-    r"([A-Z0-9]+(?:[/\-][A-Z0-9]+)+)",
-    re.IGNORECASE,
-)
-
 ORDER_NUMBER_PATTERN = re.compile(
     r"(?:Order\s*(?:number|no\.?|#))\s*[:\-]?\s*"
-    r"([A-Z0-9]+(?:[/\-][A-Z0-9]+)+)",
+    r"(UBPL(?:[/\-][A-Z0-9]+)+)",
     re.IGNORECASE,
 )
 
@@ -37,6 +31,9 @@ INVOICE_NUMBER_PATTERN = re.compile(
     r"([A-Z0-9]+(?:[/\-][A-Z0-9]+)+)",
     re.IGNORECASE,
 )
+
+# Order/PO numbers are UBPL-specific identifiers.
+UBPL_PREFIX = "UBPL"
 
 DATE_PATTERN = re.compile(
     r"(?:Date|Received\s*Date|Delivery\s*Date|Expected\s*Date|Registration\s*Date|Registered\s+on)"
@@ -138,7 +135,7 @@ FIELD_PATTERNS = {
     "date": [(DATE_PATTERN, 1)],
 
     # Sales order fields
-    "order_no": [(ORDER_NUMBER_PATTERN, 1), (PO_NUMBER_PATTERN, 1)],
+    "order_no": [(ORDER_NUMBER_PATTERN, 1)],
     "order_receive_date": [(DATE_PATTERN, 1)],
     "expected_delivery_date": [(DATE_PATTERN, 1)],
     "company_name": [(COMPANY_NAME_PATTERN, 1)],
